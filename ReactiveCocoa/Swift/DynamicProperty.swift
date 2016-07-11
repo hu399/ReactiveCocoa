@@ -22,8 +22,6 @@ public final class DynamicProperty<Value>: MutablePropertyType {
 	private let extractValue: AnyObject -> Value
 	private let represent: Value -> AnyObject
 
-	private var property: MutableProperty<Value?>?
-
 	/// The current value of the property, as read and written using Key-Value
 	/// Coding.
 	public var value: Value? {
@@ -43,11 +41,24 @@ public final class DynamicProperty<Value>: MutablePropertyType {
 	/// By definition, this only works if the object given to init() is
 	/// KVO-compliant. Most UI controls are not!
 	public var producer: SignalProducer<Value?, NoError> {
-		return property?.producer ?? .empty
+		let producer = object.map { object in
+			return object.rac_valuesForKeyPath(keyPath, observer: nil)
+				.toSignalProducer()
+				.map { [extractValue = self.extractValue] in $0.map(extractValue) }
+				.flatMapError { error -> SignalProducer<Value, NoError> in
+					return SignalProducer.empty.on(completed: {
+						fatalError("Received unexpected error from KVO signal: \(error)")
+					})
+				}
+		}
+
+		return producer ?? .empty
 	}
 
 	public var signal: Signal<Value?, NoError> {
-		return property?.signal ?? .empty
+		var signal: Signal<Value, NoError>!
+		producer.startWithSignal { innerSignal, _ in signal = innerSignal }
+		return signal
 	}
 
 	/// Initializes a property that will observe and set the given key path of
@@ -55,25 +66,9 @@ public final class DynamicProperty<Value>: MutablePropertyType {
 	private init<Representatable: ObjectiveCRepresentable where Representatable.Value == Value>(object: NSObject?, keyPath: String, representable: Representatable.Type) {
 		self.object = object
 		self.keyPath = keyPath
-		self.property = MutableProperty(nil)
+
 		self.extractValue = Representatable.extractValue
 		self.represent = Representatable.represent
-
-		/// DynamicProperty stay alive as long as object is alive.
-		/// This is made possible by strong reference cycles.
-
-		object?.rac_valuesForKeyPath(keyPath, observer: nil)?
-			.toSignalProducer()
-			.start { event in
-				switch event {
-				case let .Next(newValue):
-					self.property?.value = newValue.map(self.extractValue)
-				case let .Failed(error):
-					fatalError("Received unexpected error from KVO signal: \(error)")
-				case .Interrupted, .Completed:
-					self.property = nil
-				}
-			}
 	}
 }
 
