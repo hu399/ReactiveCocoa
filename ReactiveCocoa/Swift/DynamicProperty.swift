@@ -69,6 +69,11 @@ public final class DynamicProperty<Value>: MutablePropertyType {
 
 		self.extractValue = Representatable.extractValue
 		self.represent = Representatable.represent
+
+		objc_setAssociatedObject(object,
+		                         UnsafePointer(Unmanaged.passUnretained(self).toOpaque()),
+		                         self,
+		                         .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 	}
 }
 
